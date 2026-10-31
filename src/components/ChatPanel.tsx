@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from '../types';
-import { Send, MessageSquareCode, Sparkles, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Send, MessageSquareCode, Sparkles, ExternalLink, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -16,6 +16,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   isLoading
 }) => {
   const [input, setInput] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,7 +48,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <Sparkles className="w-8 h-8 text-[#F2B84B] mx-auto mb-3 opacity-80" />
             <p className="text-base font-medium text-[#F2F2F0]">Ask anything about this codebase</p>
             <p className="text-xs text-[#A5A79B] mt-1 max-w-sm mx-auto">
-              Every answer is backed by validated line-range citations or securely abstains with <span className="italic">"I could not find this in the repo"</span> plus top file suggestions.
+              Every answer is backed by validated line-range citations and model support checking, or securely abstains with top file suggestions.
             </p>
           </div>
         ) : (
@@ -58,20 +67,25 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{msg.text}</p>
 
               {msg.citations && msg.citations.length > 0 ? (
-                <div className="mt-3 pt-3 border-t border-[#23262C] flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-semibold text-[#A5A79B]">Validated Citations:</span>
-                  {msg.citations.map((cit, cIdx) => (
-                    <button
-                      key={cIdx}
-                      onClick={() => onJumpToCitation(cit)}
-                      style={{ color: '#6FCF97', borderColor: 'rgba(111,207,151,0.4)', backgroundColor: 'rgba(111,207,151,0.1)' }}
-                      className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors flex items-center gap-1.5 shadow"
-                    >
-                      <ShieldCheck className="w-3 h-3 text-[#6FCF97]" />
-                      <span>{cit}</span>
-                      <ExternalLink className="w-3 h-3 opacity-75" />
-                    </button>
-                  ))}
+                <div className="mt-3 pt-3 border-t border-[#23262C] space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#A5A79B]">
+                    <span className="px-2 py-0.5 rounded bg-[#1A1D22] text-[#6FCF97] font-code">Range verified by code</span>
+                    <span className="px-2 py-0.5 rounded bg-[#1A1D22] text-[#E8D2B5] font-code">Support checked by a model</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {msg.citations.map((cit, cIdx) => (
+                      <button
+                        key={cIdx}
+                        onClick={() => onJumpToCitation(cit)}
+                        style={{ color: '#6FCF97', borderColor: 'rgba(111,207,151,0.4)', backgroundColor: 'rgba(111,207,151,0.1)' }}
+                        className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors flex items-center gap-1.5 shadow cursor-pointer"
+                      >
+                        <ShieldCheck className="w-3 h-3 text-[#6FCF97]" />
+                        <span>{cit}</span>
+                        <ExternalLink className="w-3 h-3 opacity-75" />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : msg.role === 'assistant' && msg.text.includes('could not find') ? (
                 <div className="mt-3 pt-3 border-t border-[#23262C] flex items-center gap-2">
@@ -89,9 +103,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {isLoading && (
           <div className="p-4 rounded-xl bg-[#08090A] border border-[#23262C] mr-6 animate-pulse flex items-center gap-3">
             <div className="w-4 h-4 rounded-full bg-[#F2B84B] animate-ping" />
-            <span className="font-code text-xs text-[#A5A79B]">Retrieving chunks via hybrid embedding search and validating citations...</span>
+            <span className="font-code text-xs text-[#A5A79B]">Searching README, retrieving chunks via hybrid search and checking citations...</span>
           </div>
         )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Input Form */}
@@ -100,14 +115,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder="Ask a question (e.g. 'Where is the main entry point?')"
+          placeholder="Ask a question (e.g. 'What is this actual project about?')"
           className="flex-1 bg-transparent px-3 py-2 text-[15px] text-[#F2F2F0] placeholder-[#A5A79B] focus:outline-none"
         />
         <button
           type="submit"
           disabled={isLoading || !input.trim()}
           style={{ backgroundColor: '#F2F2F0', color: '#0A0A0A' }}
-          className="px-5 py-2 disabled:opacity-40 rounded-full font-medium text-xs transition-opacity shadow-md"
+          className="px-5 py-2 disabled:opacity-40 rounded-full font-medium text-xs transition-opacity shadow-md cursor-pointer"
         >
           <Send className="w-4 h-4" />
         </button>

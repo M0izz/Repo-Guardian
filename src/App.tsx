@@ -76,6 +76,12 @@ export default function App() {
       setShowDebug(true);
     }
 
+    const repoParam = params.get('repo');
+    if (repoParam) {
+      setRepoUrl(repoParam);
+      handleIngest(repoParam);
+    }
+
     const handleError = (event: ErrorEvent) => {
       console.error('Window error:', event.error?.stack || event.message);
       if (event.error?.stack) setLastStack(event.error.stack);
@@ -92,6 +98,22 @@ export default function App() {
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
   }, []);
+
+  const handleStartTour = (overrideUrl?: string) => {
+    const targetUrl = overrideUrl || repoUrl;
+    if (!targetUrl.trim()) return;
+
+    if (!targetUrl.includes('github.com') && !targetUrl.includes('/')) {
+      setLastError('Invalid URL: must be a github.com repository.');
+      return;
+    }
+
+    const encoded = encodeURIComponent(targetUrl);
+    const newWindow = window.open(`/?repo=${encoded}`, '_blank');
+    if (!newWindow) {
+      window.location.href = `/?repo=${encoded}`;
+    }
+  };
 
   const copyDebugReport = () => {
     const report = {
@@ -206,7 +228,10 @@ export default function App() {
                 contentMap[f.path] = f.content || '';
               });
               setFileContentMap(contentMap);
-              if (validFiles.length > 0 && validFiles[0]?.path) {
+              const readmeFile = validFiles.find((f: any) => f.path.toLowerCase().includes('readme'));
+              if (readmeFile) {
+                setActiveFile(readmeFile.path);
+              } else if (validFiles.length > 0 && validFiles[0]?.path) {
                 setActiveFile(validFiles[0].path);
               }
 
@@ -457,32 +482,15 @@ export default function App() {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => handleIngest()}
-              disabled={isIngesting}
+              onClick={() => handleStartTour()}
               style={{ backgroundColor: '#E8D2B5', color: '#0A0A0A' }}
-              className="h-[44px] px-8 rounded-full font-medium text-sm transition-colors disabled:opacity-50 flex items-center gap-2 shrink-0 shadow"
+              className="h-[44px] px-8 rounded-full font-medium text-sm transition-colors flex items-center gap-2 shrink-0 shadow cursor-pointer"
             >
-              {isIngesting ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>{ingestStage}...</span>
-                </>
-              ) : (
-                <span>Start tour</span>
-              )}
+              <span>Start tour</span>
             </motion.button>
           </motion.div>
 
-          <PathStream
-            isIngesting={isIngesting}
-            ingestStage={ingestStage}
-            filesList={streamFiles}
-            repoName={repoName}
-            sha={sha}
-            hasReceivedCounts={hasReceivedCounts}
-            keptCount={keptCount}
-            filteredCount={filteredCount}
-          />
+
 
           {lastError && (
             <div className="w-full max-w-2xl mt-4 bg-rose-950/60 border border-rose-800 text-rose-300 p-3 rounded-xl text-xs font-code">
@@ -562,9 +570,12 @@ export default function App() {
               </div>
             </div>
           </div>
+        </main>
 
-          {/* How it works section */}
-          <HowItWorksSection />
+        {/* How it works section (Full-bleed outside main) */}
+        <HowItWorksSection />
+
+        <main className="flex-1 max-w-4xl mx-auto px-6 flex flex-col items-center text-center relative z-20 w-full">
 
           {/* Why you can trust it */}
           <motion.section
@@ -583,9 +594,9 @@ export default function App() {
                 <h3 className="font-semibold text-sm text-[#F2F2F0]">Line-level citations</h3>
                 <p className="text-sm text-[#A5A79B]">Every claim cites exact file and line ranges.</p>
                 <button
-                  onClick={() => handleIngest('https://github.com/octocat/Hello-World')}
+                  onClick={() => handleStartTour('https://github.com/octocat/Hello-World')}
                   style={{ color: '#6FCF97', borderColor: 'rgba(111,207,151,0.4)', backgroundColor: 'rgba(111,207,151,0.1)' }}
-                  className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors inline-flex items-center gap-1"
+                  className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors inline-flex items-center gap-1 cursor-pointer"
                 >
                   <span>README.md:1-5</span>
                 </button>
@@ -596,9 +607,9 @@ export default function App() {
                 <h3 className="font-semibold text-sm text-[#F2F2F0]">Validated answers</h3>
                 <p className="text-sm text-[#A5A79B]">Every citation is programmatically verified against the code tree.</p>
                 <button
-                  onClick={() => handleIngest('https://github.com/octocat/Hello-World')}
+                  onClick={() => handleStartTour('https://github.com/octocat/Hello-World')}
                   style={{ color: '#6FCF97', borderColor: 'rgba(111,207,151,0.4)', backgroundColor: 'rgba(111,207,151,0.1)' }}
-                  className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors inline-flex items-center gap-1"
+                  className="font-code text-xs px-2.5 py-1 rounded-md border hover:bg-[#6FCF97]/20 transition-colors inline-flex items-center gap-1 cursor-pointer"
                 >
                   <span>index.js:10-18</span>
                 </button>
@@ -618,7 +629,7 @@ export default function App() {
             </div>
           </motion.section>
 
-          {/* Comparison table */}
+          {/* Comparison section */}
           <motion.section
             initial={{ opacity: 0, y: 12 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -627,34 +638,51 @@ export default function App() {
             className="w-full mb-20 text-left"
           >
             <div className="font-mono text-xs uppercase tracking-[0.12em] text-[#A5A79B] mb-2">Comparison</div>
-            <h2 className="font-terminal-heading text-[48px] tracking-tight mb-6 text-[#F2F2F0]">Why not just chat with a repo?</h2>
-            <div className="bg-[#0F1114] border border-[#23262C] rounded-2xl overflow-hidden">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-[#1A1D22] border-b border-[#23262C] text-[#A5A79B] font-mono text-xs">
-                  <tr>
-                    <th className="p-4">Dimension</th>
-                    <th className="p-4">Typical chat tool</th>
-                    <th className="p-4 text-[#E8D2B5]">RepoGuide</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#23262C] text-[#F2F2F0]">
-                  <tr>
-                    <td className="p-4 font-semibold">Source of truth</td>
-                    <td className="p-4 text-[#A5A79B] flex items-center gap-2"><X className="w-4 h-4 text-rose-400" /> Static text snippets</td>
-                    <td className="p-4 text-[#6FCF97] flex items-center gap-2"><Check className="w-4 h-4 text-[#6FCF97]" /> Pinned commit SHA + Symbol Chunks</td>
-                  </tr>
-                  <tr className="bg-[#08090A]/40">
-                    <td className="p-4 font-semibold">Interaction</td>
-                    <td className="p-4 text-[#A5A79B] flex items-center gap-2"><X className="w-4 h-4 text-rose-400" /> Type a prompt</td>
-                    <td className="p-4 text-[#6FCF97] flex items-center gap-2"><Check className="w-4 h-4 text-[#6FCF97]" /> Spoken guided tour + Voice interrupt</td>
-                  </tr>
-                  <tr>
-                    <td className="p-4 font-semibold">Proof</td>
-                    <td className="p-4 text-[#A5A79B] flex items-center gap-2"><X className="w-4 h-4 text-rose-400" /> Sometimes cites files</td>
-                    <td className="p-4 text-[#6FCF97] flex items-center gap-2"><Check className="w-4 h-4 text-[#6FCF97]" /> Validated line-range citations</td>
-                  </tr>
-                </tbody>
-              </table>
+            <h2 className="font-terminal-heading text-[48px] tracking-tight mb-8 text-[#F2F2F0]">Why not just chat with a repo?</h2>
+            <div className="bg-[#0F1114] border border-[#23262C] rounded-[24px] overflow-hidden shadow-xl">
+              <div className="grid grid-cols-1 md:grid-cols-12 bg-[#1A1D22] border-b border-[#23262C] font-mono text-xs text-[#A5A79B] px-6 py-4">
+                <div className="md:col-span-3 uppercase tracking-wider">Dimension</div>
+                <div className="md:col-span-4 uppercase tracking-wider">Typical chat tool</div>
+                <div className="md:col-span-5 uppercase tracking-wider text-[#E8D2B5]">RepoGuide</div>
+              </div>
+
+              <div className="divide-y divide-[#23262C]">
+                {[
+                  {
+                    dim: 'Source of truth',
+                    chat: 'Static text snippets',
+                    repo: 'Pinned commit SHA + Symbol Chunks'
+                  },
+                  {
+                    dim: 'Interaction',
+                    chat: 'Type a prompt',
+                    repo: 'Spoken guided tour + Voice interrupt'
+                  },
+                  {
+                    dim: 'Proof',
+                    chat: 'Sometimes cites files',
+                    repo: 'Validated line-range citations'
+                  }
+                ].map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-1 md:grid-cols-12 px-6 py-5 items-center gap-4 hover:bg-[#14171C]/50 transition-colors">
+                    <div className="md:col-span-3 font-semibold text-[#F2F2F0] text-sm">
+                      {row.dim}
+                    </div>
+                    <div className="md:col-span-4 text-sm text-[#A5A79B] flex items-center gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-rose-950/40 border border-rose-900/60 flex items-center justify-center shrink-0">
+                        <X className="w-3.5 h-3.5 text-rose-400" />
+                      </span>
+                      <span>{row.chat}</span>
+                    </div>
+                    <div className="md:col-span-5 text-sm text-[#F2F2F0] flex items-center gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-emerald-950/40 border border-emerald-900/60 flex items-center justify-center shrink-0">
+                        <Check className="w-3.5 h-3.5 text-[#6FCF97]" />
+                      </span>
+                      <span className="font-medium text-[#6FCF97]">{row.repo}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </motion.section>
         </main>
@@ -757,7 +785,26 @@ export default function App() {
       </header>
 
       {/* Main 2-Column Workspace (Left 55% Code, Right 45% Tour/Ask) with ErrorBoundaries */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-hidden">
+      {/* Main Workspace: Show PathStream ingestion view if not yet ingested, else 2-column workspace */}
+      {!isIngested ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#08090A]">
+          <div className="max-w-xl w-full text-center">
+            <h2 className="text-2xl font-semibold mb-2 text-[#F2F2F0]">Ingesting Repository...</h2>
+            <p className="text-sm text-[#A5A79B] mb-6">Parsing tree structure, filtering lockfiles, and pinning commit SHA.</p>
+            <PathStream
+              isIngesting={isIngesting}
+              ingestStage={ingestStage}
+              filesList={streamFiles}
+              repoName={repoName}
+              sha={sha}
+              hasReceivedCounts={hasReceivedCounts}
+              keptCount={keptCount}
+              filteredCount={filteredCount}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 overflow-hidden">
         {/* Left 55% (7 cols out of 12) */}
         <div className="lg:col-span-7 h-full overflow-hidden">
           <ErrorBoundary panelName="Code Viewer">
@@ -871,6 +918,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      )}
 
       {showConstellation && (
         <ErrorBoundary panelName="Map View">

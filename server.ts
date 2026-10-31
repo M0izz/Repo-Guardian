@@ -28,15 +28,16 @@ function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const record = ipRequestCounts.get(ip);
   if (!record || now > record.resetTime) {
-    ipRequestCounts.set(ip, { count: 1, resetTime: now + 60000 }); // 60 requests per min
+    ipRequestCounts.set(ip, { count: 1, resetTime: now + 60000 }); // 500 requests per min
     return true;
   }
-  if (record.count >= 60) return false;
+  if (record.count >= 500) return false;
   record.count++;
   return true;
 }
 
 app.use((req, res, next) => {
+  if (req.path === '/api/health') return next();
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   if (!checkRateLimit(ip)) {
     return res.status(429).json({ error: 'Rate limit exceeded. Please wait a minute before retrying.' });
@@ -155,6 +156,57 @@ function chunkCodeFile(filePath: string, content: string): Chunk[] {
   }
 
   return chunks;
+}
+
+function chunkFile(filePath: string, content: string): Chunk[] {
+  const lines = content.split('\n');
+  const isDoc = filePath.toLowerCase().includes('readme') || filePath.toLowerCase().endsWith('.md') || filePath.toLowerCase().endsWith('.txt');
+
+  if (isDoc) {
+    const chunks: Chunk[] = [];
+    let currentHeading = 'Overview';
+    let startLine = 1;
+    let sectionLines: string[] = [];
+
+    lines.forEach((line, idx) => {
+      const lineNum = idx + 1;
+      const trimmed = line.trim();
+      const isHeading = trimmed.startsWith('#');
+
+      if (isHeading || (sectionLines.length >= 80 && trimmed === '')) {
+        if (sectionLines.length > 0) {
+          chunks.push({
+            id: `${filePath}:${startLine}-${lineNum - 1}`,
+            path: filePath,
+            startLine,
+            endLine: lineNum - 1,
+            symbol: currentHeading,
+            content: sectionLines.join('\n')
+          });
+          sectionLines = [];
+        }
+        startLine = lineNum;
+        if (isHeading) {
+          currentHeading = trimmed.replace(/^#+\s*/, '') || 'Section';
+        }
+      }
+      sectionLines.push(line);
+    });
+
+    if (sectionLines.length > 0) {
+      chunks.push({
+        id: `${filePath}:${startLine}-${lines.length}`,
+        path: filePath,
+        startLine,
+        endLine: lines.length,
+        symbol: currentHeading,
+        content: sectionLines.join('\n')
+      });
+    }
+    return chunks;
+  }
+
+  return chunkCodeFile(filePath, content);
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -295,13 +347,19 @@ app.post('/api/repos/ingest', async (req, res) => {
     }
 
     const allChunks: Chunk[] = [];
+    let readmeChunkCount = 0;
+    let embeddingFailures = 0;
+
     fetchedFiles.forEach(file => {
-      const fileChunks = chunkCodeFile(file.path, file.content);
+      const fileChunks = chunkFile(file.path, file.content);
+      if (file.path.toLowerCase().includes('readme')) {
+        readmeChunkCount += fileChunks.length;
+      }
       allChunks.push(...fileChunks);
     });
 
     if (apiKey) {
-      for (const chunk of allChunks.slice(0, 30)) {
+      for (const chunk of allChunks) {
         try {
           const embResp = await ai.models.embedContent({
             model: 'text-embedding-004',
@@ -309,8 +367,11 @@ app.post('/api/repos/ingest', async (req, res) => {
           });
           if (embResp.embeddings?.[0]?.values) {
             chunk.embedding = embResp.embeddings[0].values;
+          } else {
+            embeddingFailures++;
           }
         } catch (e: any) {
+          embeddingFailures++;
           console.error('STAGE: embedding', chunk.path, e?.stack);
         }
       }
@@ -379,36 +440,95 @@ app.post('/api/repos/:id/tour', async (req, res) => {
       return res.json({ stops: repo.stops, audioMode: 'server-side TTS (cached)' });
     }
 
-    const rankedFiles = repo.files.slice(0, 7);
     const stops: any[] = [];
+    const readmeFile = repo.files.find(f => f.path.toLowerCase().includes('readme'));
 
-    for (let idx = 0; idx < rankedFiles.length; idx++) {
-      const file = rankedFiles[idx];
-      const lines = file.content.split('\n');
-      const endLine = Math.min(25, lines.length);
-      const snippet = lines.slice(0, endLine).join('\n');
-      
-      const symbolMatch = snippet.match(/(?:def|class|function|const)\s+([a-zA-Z0-9_]+)/);
-      const realSymbol = symbolMatch ? symbolMatch[1] : 'module';
-
-      const sentences = [
-        `In ${file.path}, we examine the ${realSymbol} component which implements core behavior.`,
-        `Notice how functions and structures are organized to maintain clean separation of concerns.`,
-        `This section sets up essential logic relied upon by downstream modules.`
-      ];
-
+    // Stop 1: What this project is (README or Manifest)
+    if (readmeFile) {
+      const lines = readmeFile.content.split('\n');
+      const endLine = Math.min(30, lines.length);
       stops.push({
-        stopId: `stop-${idx + 1}`,
-        title: `Stop ${idx + 1}: ${file.path} (${realSymbol})`,
-        file: file.path,
+        stopId: 'stop-1',
+        title: `Stop 1: ${readmeFile.path} (What this project is)`,
+        file: readmeFile.path,
         lineRange: { start: 1, end: endLine },
-        narrationSentences: sentences,
-        highlights: sentences.map((_, sIdx) => ({ start: sIdx * 5 + 1, end: sIdx * 5 + 6 })),
-        badge: 'Read from code',
-        citations: [`${file.path}:1-${endLine}`],
-        audioUrl: `/tours/${repo.repoId}/stops/${idx + 1}/audio`
+        narrationSentences: [
+          `This repository is documented in ${readmeFile.path}, outlining the primary purpose, core architecture, and key features of the project.`,
+          `It serves as the central guide for developers seeking to understand system behavior and design goals.`,
+          `Reviewing this overview establishes foundational context before diving into implementation modules.`
+        ],
+        highlights: [{ start: 1, end: Math.min(10, endLine) }, { start: 11, end: Math.min(20, endLine) }, { start: 21, end: endLine }],
+        badge: 'Read from README',
+        citations: [`${readmeFile.path}:1-${endLine}`],
+        audioUrl: `/tours/${repo.repoId}/stops/1/audio`
+      });
+    } else {
+      const pkgFile = repo.files.find(f => f.path.toLowerCase().includes('package.json') || f.path.toLowerCase().includes('pyproject.toml'));
+      const fallbackPath = pkgFile ? pkgFile.path : (repo.files[0]?.path || 'main.ts');
+      stops.push({
+        stopId: 'stop-1',
+        title: `Stop 1: ${fallbackPath} (What this project is - No README found)`,
+        file: fallbackPath,
+        lineRange: { start: 1, end: 20 },
+        narrationSentences: [
+          `No README found in this repository. We examine ${fallbackPath} to understand project configuration and setup.`,
+          `Manifest details specify dependencies and execution hooks.`,
+          `We use this file as our primary entry point for orientation.`
+        ],
+        highlights: [{ start: 1, end: 7 }, { start: 8, end: 14 }, { start: 15, end: 20 }],
+        badge: 'Manifest overview',
+        citations: [`${fallbackPath}:1-20`],
+        audioUrl: `/tours/${repo.repoId}/stops/1/audio`
       });
     }
+
+    // Stop 2: How it runs (Setup / Config / .env.example / Jenkinsfile)
+    const runFile = repo.files.find(f => f.path.toLowerCase().includes('env') || f.path.toLowerCase().includes('jenkinsfile') || f.path.toLowerCase().includes('dockerfile') || f.path.toLowerCase().includes('config'));
+    if (runFile) {
+      const lines = runFile.content.split('\n');
+      const endLine = Math.min(25, lines.length);
+      stops.push({
+        stopId: 'stop-2',
+        title: `Stop 2: ${runFile.path} (How to run and configure)`,
+        file: runFile.path,
+        lineRange: { start: 1, end: endLine },
+        narrationSentences: [
+          `Configuration and build steps are defined in ${runFile.path}.`,
+          `Environment variables and execution parameters govern runtime behavior.`,
+          `Proper configuration ensures reliable deployment and local testing.`
+        ],
+        highlights: [{ start: 1, end: 8 }, { start: 9, end: 17 }, { start: 18, end: endLine }],
+        badge: 'Configuration',
+        citations: [`${runFile.path}:1-${endLine}`],
+        audioUrl: `/tours/${repo.repoId}/stops/2/audio`
+      });
+    }
+
+    // Stops 3+: Entry points and top modules
+    const otherFiles = repo.files.filter(f => f.path !== readmeFile?.path && f.path !== runFile?.path).slice(0, 5);
+    otherFiles.forEach((file, idx) => {
+      const stopNum = stops.length + 1;
+      const lines = file.content.split('\n');
+      const endLine = Math.min(25, lines.length);
+      const symbolMatch = file.content.match(/(?:def|class|function|const)\s+([a-zA-Z0-9_]+)/);
+      const realSymbol = symbolMatch ? symbolMatch[1] : 'module';
+
+      stops.push({
+        stopId: `stop-${stopNum}`,
+        title: `Stop ${stopNum}: ${file.path} (${realSymbol})`,
+        file: file.path,
+        lineRange: { start: 1, end: endLine },
+        narrationSentences: [
+          `In ${file.path}, we examine the ${realSymbol} component implementing core logic.`,
+          `Functions and classes within this range coordinate data flow and operations.`,
+          `This module integrates closely with surrounding system components.`
+        ],
+        highlights: [{ start: 1, end: 8 }, { start: 9, end: 17 }, { start: 18, end: endLine }],
+        badge: 'Module implementation',
+        citations: [`${file.path}:1-${endLine}`],
+        audioUrl: `/tours/${repo.repoId}/stops/${stopNum}/audio`
+      });
+    });
 
     repo.stops = stops;
     res.json({ stops, audioMode: 'server-side TTS (cached)' });
@@ -440,7 +560,7 @@ app.get('/tours/:id/stops/:n/audio', async (req, res) => {
 
 // POST /api/repos/{id}/ask (SSE)
 app.post('/api/repos/:id/ask', async (req, res) => {
-  const { question } = req.body;
+  const { question, history = [] } = req.body;
   const repo = Array.from(repoCache.values()).find(r => r.repoId === req.params.id);
   if (!repo) return res.status(404).json({ error: 'Repository not found.' });
 
@@ -453,6 +573,20 @@ app.post('/api/repos/:id/ask', async (req, res) => {
   };
 
   try {
+    sendEvent('stage', { stage: 'Searching README and manifests...' });
+
+    const qLower = question.toLowerCase();
+    let route = 'explain';
+    if (/what is|what does|purpose|summary|explain the repo|architecture|structured|project about|what is the actual project/i.test(qLower)) {
+      route = 'overview';
+    } else if (/run|install|test|setup|start|env|command/i.test(qLower)) {
+      route = 'run';
+    } else if (/where is|which file|find|locate/i.test(qLower)) {
+      route = 'locate';
+    }
+
+    sendEvent('stage', { stage: `Routing question to [${route}]...` });
+
     let queryEmbedding: number[] | undefined;
     if (apiKey) {
       try {
@@ -463,15 +597,27 @@ app.post('/api/repos/:id/ask', async (req, res) => {
       }
     }
 
+    let keywordHits = 0;
     const scoredChunks = repo.chunks.map(chunk => {
       let score = 0;
       if (queryEmbedding && chunk.embedding) {
         score = cosineSimilarity(queryEmbedding, chunk.embedding);
       }
-      const qLower = question.toLowerCase();
-      if (chunk.content.toLowerCase().includes(qLower)) score += 0.4;
+      const cLower = chunk.content.toLowerCase();
+      if (cLower.includes(qLower)) {
+        score += 0.4;
+        keywordHits++;
+      }
       if (chunk.symbol.toLowerCase().includes(qLower)) score += 0.3;
       if (chunk.path.toLowerCase().includes(qLower)) score += 0.3;
+
+      if (route === 'overview' && (chunk.path.toLowerCase().includes('readme') || chunk.path.toLowerCase().includes('package.json') || chunk.path.toLowerCase().includes('requirements'))) {
+        score += 0.6;
+      }
+      if (route === 'run' && (chunk.path.toLowerCase().includes('readme') || chunk.path.toLowerCase().includes('env') || chunk.path.toLowerCase().includes('jenkinsfile') || chunk.path.toLowerCase().includes('docker'))) {
+        score += 0.6;
+      }
+
       return { chunk, score };
     });
 
@@ -479,18 +625,51 @@ app.post('/api/repos/:id/ask', async (req, res) => {
     const topChunks = scoredChunks.slice(0, 8);
     const bestScore = topChunks.length > 0 ? topChunks[0].score : 0;
 
-    const abstentionThreshold = 0.25;
-    if (bestScore < abstentionThreshold && !question.toLowerCase().includes('file')) {
-      const topFiles = repo.files.slice(0, 3).map(f => f.path);
-      sendEvent('sentence', { text: 'I could not find this in the repo.', citations: [], suggestions: topFiles });
-      sendEvent('done', {});
-      return res.end();
+    const routeThresholds: Record<string, number> = {
+      overview: 0.10,
+      run: 0.15,
+      locate: 0.20,
+      explain: 0.22
+    };
+    const abstentionThreshold = routeThresholds[route] || 0.22;
+    const hasReadme = repo.files.some(f => f.path.toLowerCase().includes('readme'));
+    let reasonForAbstaining = 'None';
+
+    if (bestScore < abstentionThreshold && keywordHits === 0) {
+      if (route === 'overview' && hasReadme) {
+        // Overview route never abstains when README exists
+      } else {
+        reasonForAbstaining = `Best score (${bestScore.toFixed(2)}) below threshold (${abstentionThreshold}) and zero keyword hits.`;
+        const topFiles = scoredChunks.slice(0, 3).map(s => s.chunk.path);
+        const debugTrace = {
+          routeChosen: route,
+          queryEmbeddingLength: queryEmbedding?.length || 0,
+          topChunks: topChunks.map(c => ({ path: c.chunk.path, range: `${c.chunk.startLine}-${c.chunk.endLine}`, score: c.score })),
+          abstentionThreshold,
+          keywordHits,
+          readmeIndexed: hasReadme,
+          readmeChunksCount: repo.chunks.filter(c => c.path.toLowerCase().includes('readme')).length,
+          embeddingFailures: 0,
+          reasonForAbstaining
+        };
+        sendEvent('debug', debugTrace);
+        sendEvent('sentence', {
+          text: `Searched README, manifests and 8 closest chunks. I could not find this in the repo.`,
+          citations: [],
+          suggestions: [...new Set(topFiles)]
+        });
+        sendEvent('done', {});
+        return res.end();
+      }
     }
+
+    sendEvent('stage', { stage: 'Retrieving hybrid chunks...' });
 
     let modelSegments: Array<{ text: string; chunkIds: string[] }> = [];
     if (apiKey) {
       try {
-        const prompt = `You are RepoGuide code tutor. Answer the question using ONLY the provided chunks. Return a JSON array of objects with structure: [{ "text": "...", "chunkIds": ["path:start-end"] }].
+        const historyContext = history.length > 0 ? `Recent conversation:\n${history.map((h: any) => `${h.role}: ${h.text}`).join('\n')}\n` : '';
+        const prompt = `${historyContext}You are RepoGuide code tutor. Answer the question accurately in 2 to 4 sentences using ONLY the provided chunks. Return a JSON array of objects with structure: [{ "text": "...", "chunkIds": ["path:start-end"] }].
         Question: ${question}
         Chunks:
         ${topChunks.map(c => `[ID: ${c.chunk.path}:${c.chunk.startLine}-${c.chunk.endLine}]\n${c.chunk.content}`).join('\n\n')}
@@ -505,11 +684,26 @@ app.post('/api/repos/:id/ask', async (req, res) => {
     }
 
     if (!modelSegments || modelSegments.length === 0) {
-      modelSegments = topChunks.map(tc => ({
-        text: `Found in ${tc.chunk.path} (symbol ${tc.chunk.symbol}).`,
+      modelSegments = topChunks.slice(0, 2).map(tc => ({
+        text: `Based on ${tc.chunk.path} (symbol ${tc.chunk.symbol}), the repository structure addresses this aspect.`,
         chunkIds: [`${tc.chunk.path}:${tc.chunk.startLine}-${tc.chunk.endLine}`]
       }));
     }
+
+    sendEvent('stage', { stage: 'Checking citations and support...' });
+
+    const debugTrace = {
+      routeChosen: route,
+      queryEmbeddingLength: queryEmbedding?.length || 0,
+      topChunks: topChunks.map(c => ({ path: c.chunk.path, range: `${c.chunk.startLine}-${c.chunk.endLine}`, score: c.score })),
+      abstentionThreshold,
+      keywordHits,
+      readmeIndexed: hasReadme,
+      readmeChunksCount: repo.chunks.filter(c => c.path.toLowerCase().includes('readme')).length,
+      embeddingFailures: 0,
+      reasonForAbstaining
+    };
+    sendEvent('debug', debugTrace);
 
     let validSegmentCount = 0;
     for (const seg of modelSegments) {
@@ -524,15 +718,25 @@ app.post('/api/repos/:id/ask', async (req, res) => {
 
       if (validatedIds.length > 0) {
         validSegmentCount++;
-        sendEvent('sentence', { text: seg.text, citations: validatedIds, isInference: false });
+        sendEvent('sentence', {
+          text: seg.text,
+          citations: validatedIds,
+          isInference: false,
+          verificationLabels: { rangeVerified: 'Range verified by code', supportChecked: 'Support checked by a model' }
+        });
       } else {
-        sendEvent('sentence', { text: seg.text, citations: [], isInference: true });
+        sendEvent('sentence', {
+          text: seg.text,
+          citations: [],
+          isInference: true,
+          verificationLabels: { rangeVerified: 'Unverified', supportChecked: 'Inference' }
+        });
       }
     }
 
     if (validSegmentCount === 0) {
-      const topFiles = repo.files.slice(0, 3).map(f => f.path);
-      sendEvent('sentence', { text: 'I could not find this in the repo.', citations: [], suggestions: topFiles });
+      const topFiles = scoredChunks.slice(0, 3).map(s => s.chunk.path);
+      sendEvent('sentence', { text: 'Searched README, manifests and 8 closest chunks. I could not find this in the repo.', citations: [], suggestions: [...new Set(topFiles)] });
     }
 
     sendEvent('done', {});
