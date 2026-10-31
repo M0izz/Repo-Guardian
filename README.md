@@ -1,4 +1,4 @@
-# RepoGuide
+# Repo Guardian
 
 An AI-powered code tutor that guides users through unfamiliar codebases with strict line-level citations, execution grounding, and issue contribution planning.
 
