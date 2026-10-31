@@ -1,0 +1,8 @@
+{
+  "name": "Repo Guardian",
+  "description": "An AI-powered code tutor that teaches unfamiliar repositories through interactive spoken tours, strict line-level citations, and issue contribution planning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

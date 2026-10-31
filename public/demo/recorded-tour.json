@@ -1,0 +1,177 @@
+{
+  "repo": "axios/axios",
+  "sha": "9d11464a75ee5c644c0308d742f58755c0482594",
+  "license": "MIT",
+  "files": {
+    "docs/.vitepress/theme/index.ts": "// https://vitepress.dev/guide/custom-theme\nimport { h } from 'vue'\nimport type { Theme } from 'vitepress'\nimport DefaultTheme from 'vitepress/theme'\nimport SecurityUpdatesBanner from './SecurityUpdatesBanner.vue'\nimport './style.css'\n\nexport default {\n  extends: DefaultTheme,\n  Layout: () => {\n    return h(DefaultTheme.Layout, null, {\n      // https://vitepress.dev/guide/extending-default-theme#layout-slots\n      'home-hero-before': () => h(SecurityUpdatesBanner)\n    })\n  },\n  enhanceApp({ app, router, siteData }) {\n    // ...\n  }\n} satisfies Theme\n",
+    "docs/.vitepress/tokenizeSearchText.js": "/**\n * Tokenize search text while preserving MiniSearch's default behavior for\n * non-Han content and adding overlapping Han bigrams.\n *\n * MiniSearch passes a field name while indexing and omits it for queries.\n * Indexing Han unigrams keeps single-character searches useful, while queries\n * longer than one character use bigrams to avoid broad OR matches.\n *\n * @param {string} text\n * @param {string} [fieldName]\n * @returns {string[]}\n */\nexport function tokenizeSearchText(text, fieldName) {\n  const separatorPattern = /[\\n\\r\\p{Z}\\p{P}]/u;\n  const hanPattern = /\\p{Script=Han}/u;\n  const terms = [];\n  let token = '';\n  let tokenIsHan = false;\n\n  const flush = () => {\n    if (!token) {\n      return;\n    }\n\n    if (!tokenIsHan) {\n      terms.push(token);\n      token = '';\n      return;\n    }\n\n    const characters = [...token];\n\n    if (fieldName !== undefined || characters.length === 1) {\n      terms.push(...characters);\n    }\n\n    for (let index = 0; index < characters.length - 1; index++) {\n      terms.push(characters[index] + characters[index + 1]);\n    }\n\n    token = '';\n  };\n\n  for (const character of text) {\n    if (separatorPattern.test(character)) {\n      flush();\n      continue;\n    }\n\n    const characterIsHan = hanPattern.test(character);\n\n    if (token && characterIsHan !== tokenIsHan) {\n      flush();\n    }\n\n    token += character;\n    tokenIsHan = characterIsHan;\n  }\n\n  flush();\n\n  return terms;\n}\n",
+    "docs/scripts/process-sponsors.js": "import fs from 'node:fs';\nimport axios from 'axios';\nimport { printSuccessMessage, printErrorMessage, printInfoMessage } from './utils.js';\nimport { selectLatestSponsorsBySlug } from './selectLatestSponsorsBySlug.js';\n\n/**\n * Special configuration for processing sponsor data.\n */\nconst config = {\n  legacyAgreements: {\n    Stytch: 'gold',\n    Airbnb: 'silver',\n    Descope: 'gold',\n    'Principal Financial Group': 'gold',\n  },\n  sponsorsToIgnore: ['axios'],\n  additionalSponsors: [\n    // Permanent gold sponsorship, managed independently of Open Collective.\n    {\n      name: 'HeroDevs',\n      imageUrl: '/sponsors/herodevs.svg',\n      description: 'Security and long-term support for end-of-life open source software.',\n      tier: 'gold',\n      slug: 'herodevs',\n      website: 'https://www.herodevs.com/support/nes-for-axios',\n      socialLinks: [\n        { type: 'TWITTER', url: 'https://x.com/herodevs' },\n        { type: 'GITHUB', url: 'https://github.com/herodevs' },\n        { type: 'LINKEDIN', url: 'https://www.linkedin.com/company/herodevs/' },\n        { type: 'YOUTUBE', url: 'https://www.youtube.com/@HeroDevs' },\n      ],\n      active: true,\n    },\n    {\n      name: 'Code for Japan',\n      imageUrl: '/sponsors/code-for-japan.jpg',\n      description: null,\n      tier: 'silver',\n      slug: 'code-for-japan',\n      website: 'https://www.code4japan.org/',\n      socialLinks: [{ type: 'TWITTER', url: 'https://x.com/CodeforJapan' }],\n      active: true,\n    },\n    {\n      name: 'superluxuryreps',\n      imageUrl: 'https://images.opencollective.com/superluxuryreps/378b62f/avatar.png',\n      description: 'super luxury reps',\n      tier: 'silver',\n      slug: 'superluxuryreps',\n      website:\n        'https://superluxuryreps.com/?utm_source=axios_docs_website&utm_medium=website&utm_campaign=axios_open_collective_sponsorship',\n      socialLinks: [],\n      active: true,\n    },\n  ],\n};\n\n/**\n * The GraphQL query to get all sponsors.\n *\n * @type {string}\n */\nconst getAllSponsorsQuery = `\nquery Account {\n  account(githubHandle: \"https://github.com/axios\") {\n    name\n    slug\n    members(role: BACKER, limit: 1000) {\n      totalCount\n      nodes {\n        account {\n          name\n          slug\n          socialLinks {\n            type\n            url\n            createdAt\n            updatedAt\n          }\n          website\n          imageUrl\n          legalName\n          description\n        }\n        tier {\n          name\n        }\n        totalDonations {\n          value\n          currency\n        }\n        since\n      }\n    }\n  }\n}\n`;\n\n/**\n * The GraphQL query to get all active sponsors.\n *\n * @type {string}\n */\nconst getActiveSponsorsQuery = `\nquery Account {\n  account(githubHandle: \"https://github.com/axios\") {\n    orders(onlyActiveSubscriptions: true, onlySubscriptions: true, frequency: MONTHLY, status: ACTIVE, limit: 1000) {\n      totalCount\n      nodes {\n        tier {\n          name\n        }\n        fromAccount {\n          id\n          name\n          socialLinks {\n            type\n            url\n          }\n          imageUrl\n          legalName\n          description\n          website\n          slug\n        }\n        amount {\n          currency\n          value\n        }\n        totalDonations {\n          value\n          currency\n        }\n      }\n    }\n  }\n}\n`;\n\n/**\n * Gets all sponsors.\n *\n * @returns {Promise<any>} The sponsors.\n */\nconst getAllSponsors = async () => {\n  printInfoMessage('getting all sponsors...');\n  const response = await axios.post('https://api.opencollective.com/graphql/v2', {\n    query: getAllSponsorsQuery,\n  });\n\n  return response.data.data;\n};\n\n/**\n * Gets all active sponsors.\n *\n * @returns {Promise<any>} The active sponsors.\n */\nconst getActiveSponsors = async () => {\n  printInfoMessage('getting active sponsors...');\n  const response = await axios.post('https://api.opencollective.com/graphql/v2', {\n    query: getActiveSponsorsQuery,\n  });\n\n  return response.data.data;\n};\n\n/**\n * Builds a URL with UTM parameters.\n *\n * @param {string} url - The URL to build.\n * @param {boolean} bypass - Whether to bypass UTM parameters.\n * @returns {string} The URL with UTM parameters.\n */\nconst buildLinks = (url, bypass = false) => {\n  if (bypass) {\n    return url;\n  }\n\n  try {\n    const urlObject = new URL(url);\n\n    const { searchParams } = urlObject;\n\n    searchParams.set('utm_source', 'axios_docs_website');\n    searchParams.set('utm_medium', 'website');\n    searchParams.set('utm_campaign', 'axios_open_collective_sponsorship');\n\n    return urlObject.toString();\n  } catch {\n    return url;\n  }\n};\n\n/**\n * Builds the social links shown on a sponsor card. Website links are skipped\n * because the card footer already links to the sponsor's website.\n *\n * @param {Array<{ type: string, url: string }>} socialLinks - The Open Collective social links.\n * @returns {Array<{ type: string, url: string }>} The social links with UTM parameters.\n */\nconst buildSocialLinks = (socialLinks = []) => {\n  const seen = new Set();\n\n  return socialLinks\n    .filter((link) => link.url && link.type !== 'WEBSITE')\n    .map((link) => ({ type: link.type, url: buildLinks(link.url) }))\n    .filter((link) => !seen.has(link.url) && seen.add(link.url));\n};\n\n/**\n * Formats all active sponsors.\n *\n * @param {any} sponsorsData - The sponsors data.\n * @returns {any} The formatted sponsor data.\n */\nconst formatActiveSponsorData = (sponsorsData) => {\n  const getSponsorTier = (sponsor) => {\n    if (config.legacyAgreements[sponsor.fromAccount.name]) {\n      return config.legacyAgreements[sponsor.fromAccount.name];\n    }\n\n    if (sponsor.tier?.name.toLowerCase() === 'silver sponsor') {\n      return 'silver';\n    }\n\n    return sponsor.tier?.name.toLowerCase() || 'backer';\n  };\n\n  const processedData = sponsorsData\n    .map((sponsor) => ({\n      name: sponsor.fromAccount.name ?? 'Backer',\n      imageUrl: sponsor.fromAccount.imageUrl ?? null,\n      description: sponsor.fromAccount.description ?? null,\n      tier: getSponsorTier(sponsor),\n      slug: sponsor.fromAccount.slug,\n      website: sponsor.fromAccount.website\n        ? buildLinks(sponsor.fromAccount.website)\n        : (buildLinks(\n            sponsor.fromAccount.socialLinks.find((link) => link.type === 'WEBSITE')?.url\n          ) ?? null),\n      socialLinks: buildSocialLinks(sponsor.fromAccount.socialLinks),\n    }))\n    .filter((sponsor) => !config.sponsorsToIgnore.includes(sponsor.name));\n\n  return processedData;\n};\n\n/**\n * Formats all sponsors irrespective state.\n *\n * @param {any} sponsorsData - The sponsors data.\n * @returns {any} The formatted sponsor data.\n */\nconst formatAllSponsorData = (sponsorsData) => {\n  const getSponsorTier = (sponsor) => {\n    if (config.legacyAgreements[sponsor.account.name]) {\n      return config.legacyAgreements[sponsor.account.name];\n    }\n\n    if (sponsor.tier?.name.toLowerCase() === 'silver sponsor') {\n      return 'silver';\n    }\n\n    return sponsor.tier?.name.toLowerCase() || 'backer';\n  };\n\n  const latestSponsorsBySlug = selectLatestSponsorsBySlug(sponsorsData);\n\n  const processedData = [...latestSponsorsBySlug.values()]\n    .map((sponsor) => ({\n      name: sponsor.account.name ?? 'Backer',\n      imageUrl: sponsor.account.imageUrl ?? null,\n      description: sponsor.account.description ?? null,\n      tier: getSponsorTier(sponsor),\n      slug: sponsor.account.slug,\n      website: sponsor.account.website\n        ? buildLinks(sponsor.account.website)\n        : (buildLinks(sponsor.account.socialLinks.find((link) => link.type === 'WEBSITE')?.url) ??\n          null),\n      socialLinks: buildSocialLinks(sponsor.account.socialLinks),\n    }))\n    .filter((sponsor) => !config.sponsorsToIgnore.includes(sponsor.name));\n\n  return processedData;\n};\n\n/**\n * The main process.\n */\nconst mainProcess = async () => {\n  try {\n    const allSponsors = await getAllSponsors();\n    const activeSponsors = await getActiveSponsors();\n    const additionalSponsorSlugs = new Set(\n      config.additionalSponsors.map((sponsor) => sponsor.slug)\n    );\n    const allSponsorsProcessedData = formatAllSponsorData(\n      allSponsors.account.members.nodes\n    ).filter((sponsor) => !additionalSponsorSlugs.has(sponsor.slug));\n    const activeSponsorsProcessedData = formatActiveSponsorData(\n      activeSponsors.account.orders.nodes\n    ).filter((sponsor) => !additionalSponsorSlugs.has(sponsor.slug));\n\n    const sponsorsByTier = {};\n\n    for (const sponsor of allSponsorsProcessedData) {\n      sponsorsByTier[sponsor.tier] ||= [];\n\n      const isActiveSponsor = activeSponsorsProcessedData.find(\n        (activeSponsor) => activeSponsor.slug === sponsor.slug\n      );\n\n      if (isActiveSponsor) {\n        sponsorsByTier[sponsor.tier].push({\n          ...sponsor,\n          active: true,\n        });\n      } else {\n        sponsorsByTier[sponsor.tier].push({\n          ...sponsor,\n          active: false,\n        });\n      }\n    }\n\n    for (const sponsor of activeSponsorsProcessedData) {\n      const isSponsorInAllSponsors = allSponsorsProcessedData.find(\n        (allSponsor) => allSponsor.slug === sponsor.slug\n      );\n\n      if (!isSponsorInAllSponsors) {\n        if (!sponsorsByTier[sponsor.tier]) {\n          sponsorsByTier[sponsor.tier] ||= [];\n        }\n\n        sponsorsByTier[sponsor.tier].push({\n          ...sponsor,\n          active: true,\n        });\n      }\n    }\n\n    for (const additionalSponsor of config.additionalSponsors) {\n      if (!sponsorsByTier[additionalSponsor.tier]) {\n        sponsorsByTier[additionalSponsor.tier] ||= [];\n      }\n\n      sponsorsByTier[additionalSponsor.tier].push({\n        ...additionalSponsor,\n        active: true,\n      });\n    }\n\n    fs.writeFileSync('./data/sponsors.json', JSON.stringify(sponsorsByTier, null, 2));\n\n    printSuccessMessage('processed sponsors successfully!');\n  } catch (_) {\n    printErrorMessage('failed to process sponsors!');\n    console.error(_);\n  }\n};\n\nawait mainProcess();\n",
+    "docs/scripts/utils.js": "import chalk from 'chalk';\n\nexport const printSuccessMessage = (message) => {\n  console.log(chalk.green('Success:'), `${message}`);\n};\n\nexport const printInfoMessage = (message) => {\n  console.log(chalk.blue('Info:'), `${message}`);\n};\n\nexport const printErrorMessage = (message) => {\n  console.log(chalk.red('Error:'), `${message}`);\n};\n",
+    "eslint.config.js": "import js from '@eslint/js';\nimport globals from 'globals';\n\nexport default [\n  {\n    ...js.configs.recommended,\n    files: ['lib/**/*.js'],\n    linterOptions: {\n      reportUnusedDisableDirectives: 'off'\n    },\n    languageOptions: {\n      ecmaVersion: 2018,\n      sourceType: 'module'\n    },\n    rules: {\n      ...js.configs.recommended.rules,\n      'no-cond-assign': 0,\n      'no-useless-assignment': 'off',\n      'no-unused-vars': [\n        'error',\n        { args: 'none', caughtErrors: 'none', varsIgnorePattern: '^_' }\n      ]\n    }\n  },\n  {\n    files: ['lib/**/*.js'],\n    ignores: [\n      'lib/adapters/http.js',\n      'lib/adapters/xhr.js',\n      'lib/platform/node/**/*.js',\n      'lib/platform/browser/**/*.js'\n    ],\n    languageOptions: {\n      globals: {\n        ...globals.browser,\n        ...globals.node,\n        globalThis: 'readonly'\n      }\n    }\n  },\n  {\n    files: ['lib/adapters/http.js', 'lib/platform/node/**/*.js'],\n    languageOptions: {\n      globals: {\n        ...globals.node,\n        globalThis: 'readonly'\n      }\n    }\n  },\n  {\n    files: ['lib/adapters/xhr.js', 'lib/platform/browser/**/*.js'],\n    languageOptions: {\n      globals: {\n        ...globals.browser,\n        globalThis: 'readonly'\n      }\n    }\n  }\n];\n",
+    "examples/abort-controller/server.js": "export default function (req, res) {\n  let parsedUrl;\n  try {\n    parsedUrl = new URL(req.url, 'http://localhost');\n  } catch {\n    res.writeHead(400, { 'Content-Type': 'text/plain' });\n    res.end('Invalid URL');\n    return;\n  }\n  const delay = parsedUrl.searchParams.get('delay') || 3000;\n\n  setTimeout(() => {\n    res.writeHead(200, {\n      'Content-Type': 'text/json',\n    });\n    res.write(\n      JSON.stringify({\n        message: 'Response completed successfully after ' + delay + 'ms',\n      })\n    );\n    res.end();\n  }, delay);\n}\n"
+  },
+  "stops": [
+    {
+      "file": "docs/.vitepress/theme/index.ts",
+      "title": "Stop 1: index.ts",
+      "citedRange": {
+        "start": 1,
+        "end": 20
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining docs/.vitepress/theme/index.ts to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 20
+          }
+        }
+      ],
+      "citations": [
+        "docs/.vitepress/theme/index.ts:1-20"
+      ]
+    },
+    {
+      "file": "docs/.vitepress/tokenizeSearchText.js",
+      "title": "Stop 2: tokenizeSearchText.js",
+      "citedRange": {
+        "start": 1,
+        "end": 25
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining docs/.vitepress/tokenizeSearchText.js to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 25
+          }
+        }
+      ],
+      "citations": [
+        "docs/.vitepress/tokenizeSearchText.js:1-25"
+      ]
+    },
+    {
+      "file": "docs/scripts/process-sponsors.js",
+      "title": "Stop 3: process-sponsors.js",
+      "citedRange": {
+        "start": 1,
+        "end": 25
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining docs/scripts/process-sponsors.js to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 25
+          }
+        }
+      ],
+      "citations": [
+        "docs/scripts/process-sponsors.js:1-25"
+      ]
+    },
+    {
+      "file": "docs/scripts/utils.js",
+      "title": "Stop 4: utils.js",
+      "citedRange": {
+        "start": 1,
+        "end": 14
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining docs/scripts/utils.js to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 14
+          }
+        }
+      ],
+      "citations": [
+        "docs/scripts/utils.js:1-14"
+      ]
+    },
+    {
+      "file": "eslint.config.js",
+      "title": "Stop 5: eslint.config.js",
+      "citedRange": {
+        "start": 1,
+        "end": 25
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining eslint.config.js to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 25
+          }
+        }
+      ],
+      "citations": [
+        "eslint.config.js:1-25"
+      ]
+    },
+    {
+      "file": "examples/abort-controller/server.js",
+      "title": "Stop 6: server.js",
+      "citedRange": {
+        "start": 1,
+        "end": 24
+      },
+      "narrationSentences": [
+        {
+          "text": "Examining examples/abort-controller/server.js to understand architecture and request handling patterns.",
+          "range": {
+            "start": 1,
+            "end": 10
+          }
+        },
+        {
+          "text": "This section defines core configuration and initialization exports.",
+          "range": {
+            "start": 11,
+            "end": 24
+          }
+        }
+      ],
+      "citations": [
+        "examples/abort-controller/server.js:1-24"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg: #08090A;
+    --surface: #0F1114;
+    --border: #23262C;
+    --text: #F2F2F0;
+    --sage: #A5A79B;
+    --cream: #E8D2B5;
+    --sage-dim: rgba(165,167,155,0.14);
+    --cream-glow: rgba(232,210,181,0.08);
+    --cream-hover: #F1DFC7;
+    --amber: #F2B84B;
+    --green: #6FCF97;
+    --coral: #E07A5F;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: 'Geist', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+  }
+}
+
+.font-terminal-heading {
+  font-family: 'Geist', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.font-code {
+  font-family: 'Geist Mono', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sage);
+}
+
+/* Film grain overlay */
+.film-grain {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+}
